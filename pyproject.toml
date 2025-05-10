@@ -37,4 +37,5 @@ ignore = [
     "TRY301", # Abstract raise to an inner function (would require substantial refactoring)
     "D203",   # One blank line required before class docstring (incompatible with D211)
     "D213",   # Multi-line docstring summary should start at the second line (incompatible with D212)
+    "COM812", # Missing trailing comma in collection of items (conflicts with formatter)
 ]
