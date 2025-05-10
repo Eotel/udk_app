@@ -92,6 +92,16 @@ class VoiceChat:
 
         user_text = self.transcribe_audio(audio_path)
 
+        return self.process_input(user_text)
+
+    def process_text_input(self, text_input: str) -> tuple[str, str, list]:
+        """Process text input and return the response."""
+        logger.info(f"Processing text input: {text_input}")
+
+        return self.process_input(text_input)
+
+    def process_input(self, user_text: str) -> tuple[str, str, list]:
+        """Process user input (text or transcribed voice) and return the response."""
         response_text = self.generate_response(user_text)
 
         audio_output = self.synthesize_speech(response_text)
@@ -114,7 +124,9 @@ def create_voice_chat_interface() -> gr.Blocks:
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
         gr.Markdown("# Voice Chat with OpenAI")
-        gr.Markdown("Speak into the microphone and get a voice response.")
+        gr.Markdown(
+            "Speak into the microphone or type your message to get a voice response."
+        )
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -123,7 +135,14 @@ def create_voice_chat_interface() -> gr.Blocks:
                     type="filepath",
                     label="Your Voice Input",
                 )
-                text_output = gr.Textbox(label="Transcribed Text")
+                text_output = gr.Textbox(label="Transcribed Text", interactive=False)
+
+                text_input = gr.Textbox(
+                    label="Or Type Your Message Here",
+                    placeholder="Type your message and press Enter...",
+                )
+
+                submit_button = gr.Button("Submit")
 
             with gr.Column(scale=1):
                 audio_output = gr.Audio(label="AI Voice Response")
@@ -133,6 +152,18 @@ def create_voice_chat_interface() -> gr.Blocks:
         audio_input.change(
             fn=voice_chat.process_voice_input,
             inputs=audio_input,
+            outputs=[text_output, audio_output, chat_history],
+        )
+
+        text_input.submit(
+            fn=voice_chat.process_text_input,
+            inputs=text_input,
+            outputs=[text_output, audio_output, chat_history],
+        )
+
+        submit_button.click(
+            fn=voice_chat.process_text_input,
+            inputs=text_input,
             outputs=[text_output, audio_output, chat_history],
         )
 
