@@ -38,4 +38,8 @@ ignore = [
     "D203",   # One blank line required before class docstring (incompatible with D211)
     "D213",   # Multi-line docstring summary should start at the second line (incompatible with D212)
     "COM812", # Missing trailing comma in collection of items (conflicts with formatter)
+    "S101",   # Use of assert detected (needed for pytest)
+    "S108",   # Probable insecure usage of temporary file or directory (needed for tests)
+    "PLR2004", # Magic value used in comparison (needed for tests)
+    "ARG001",  # Unused function argument (needed for fixture dependencies)
 ]
