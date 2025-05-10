@@ -43,3 +43,11 @@ ignore = [
     "PLR2004", # Magic value used in comparison (needed for tests)
     "ARG001",  # Unused function argument (needed for fixture dependencies)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",   # Use of assert detected (needed for pytest)
+    "S108",   # Probable insecure usage of temporary file or directory (needed for tests)
+    "PLR2004", # Magic value used in comparison (needed for tests)
+    "ARG001",  # Unused function argument (needed for fixture dependencies)
+]
