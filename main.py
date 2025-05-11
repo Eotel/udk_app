@@ -1,9 +1,12 @@
 """main module for launching the Gradio demo."""
+import gradio as gr
 from loguru import logger
 
 from voice_chat import create_voice_chat_interface
 
-# Expose Gradio interface for CLI hot-reload detection
+# Static demo definition for Gradio CLI hot-reload detection (RHS must call gradio API)
+demo = gr.Blocks()
+# Override with actual interface
 demo = create_voice_chat_interface()
 
 def main() -> None:
