@@ -113,23 +113,19 @@ class VoiceChat:
 
         return self.process_input(text_input)
 
-    def process_input(self, user_text: str) -> tuple[str, str, list]:
-        """Process user input (text or transcribed voice) and return the response."""
+    def process_input(self, user_text: str) -> tuple[str, str, list[dict]]:
+        """Process user input (voice or text) and return the response and chat history."""
+        # Generate assistant response and add to conversation state
         response_text = self.generate_response(user_text)
-
+        # Synthesize speech for the response
         audio_output = self.synthesize_speech(response_text)
 
-        # Build chat history for UI, skipping initial system prompt if present
-        history = self.state.conversation_history
-        # Determine starting index: skip system message at index 0
-        start = 1 if history and history[0].role == "system" else 0
-        # Build chat history tuples for UI
+        # Build chat history entries for UI, excluding system prompts
         chat_history = [
-            (history[i].content, history[i + 1].content)
-            for i in range(start, len(history), 2)
-            if i + 1 < len(history)
+            {"role": msg.role, "content": msg.content}
+            for msg in self.state.conversation_history
+            if msg.role in ("user", "assistant")
         ]
-
         return user_text, audio_output, chat_history
 
     def load_prompt(self, template_name: str, context: dict | None = None) -> None:
@@ -239,7 +235,7 @@ def create_voice_chat_interface() -> gr.Blocks:
                         button = gr.Button(f"{effect_name.capitalize()}")
                         sound_buttons.append((button, effect_name))
 
-        chat_history = gr.Chatbot(label="Chat History")
+        chat_history = gr.Chatbot(label="Chat History", type="messages")
         # Connect prompt selector to clear and load new prompt
         if available_prompts:
             prompt_selector.change(
