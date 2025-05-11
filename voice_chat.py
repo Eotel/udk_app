@@ -118,14 +118,14 @@ class VoiceChat:
 
         audio_output = self.synthesize_speech(response_text)
 
-        chat_history = [
-            (
-                self.state.conversation_history[i].content,
-                self.state.conversation_history[i + 1].content,
-            )
-            for i in range(0, len(self.state.conversation_history), 2)
-            if i + 1 < len(self.state.conversation_history)
-        ]
+        # Build chat history for UI, skipping initial system prompt if present
+        history = self.state.conversation_history
+        # Determine starting index: skip system message at index 0
+        start = 1 if history and history[0].role == "system" else 0
+        chat_history = []
+        for i in range(start, len(history), 2):
+            if i + 1 < len(history):
+                chat_history.append((history[i].content, history[i + 1].content))
 
         return user_text, audio_output, chat_history
 
