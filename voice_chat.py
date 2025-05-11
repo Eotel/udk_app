@@ -158,8 +158,6 @@ def create_voice_chat_interface() -> gr.Blocks:
     if default_prompt:
         vc_default.load_prompt(default_prompt)
     voice_chats[default_room] = vc_default
-    # UI state: current room name
-    state_room = gr.State(default_room)
 
     # Get sound effects and available effects from the default instance
     sound_effects = vc_default.sound_effects
@@ -175,7 +173,7 @@ def create_voice_chat_interface() -> gr.Blocks:
         return []
 
     # Callback to create a new chat room
-    def create_room_fn(new_room: str, cur_room: str) -> tuple[gr.components.Dropdown.update, str]:
+    def create_room_fn(new_room: str, cur_room: str) -> tuple[dict, str]:
         if new_room and new_room not in voice_chats:
             vc = VoiceChat()
             if default_prompt:
@@ -184,7 +182,7 @@ def create_voice_chat_interface() -> gr.Blocks:
         room = new_room or cur_room
         # Return updated dropdown and new room
         return (
-            gr.Dropdown.update(choices=list(voice_chats.keys()), value=room),
+            gr.update(choices=list(voice_chats.keys()), value=room),
             room,
         )
 
@@ -237,6 +235,8 @@ def create_voice_chat_interface() -> gr.Blocks:
         )
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
+        # State for current room name
+        state_room = gr.State(default_room)
         # Chat room selection and creation
         with gr.Row():
             room_selector = gr.Dropdown(
