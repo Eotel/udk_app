@@ -30,13 +30,19 @@ class VoiceChat:
         self.state = VoiceChatState()
         self.sound_effects = SoundEffects()
         # Setup Jinja2 environment for prompt templates
-        prompts_dir = Path("prompts")
+        # Setup Jinja2 environment for prompt templates (relative to this file)
+        base_dir = Path(__file__).parent
+        prompts_dir = base_dir / "prompts"
+        if not prompts_dir.exists():
+            logger.warning(f"Prompts directory not found at {prompts_dir}")
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(prompts_dir)),
             autoescape=select_autoescape()
         )
         # Discover available prompt templates
-        self.prompt_templates = [p.stem for p in prompts_dir.glob("*.j2") if p.is_file()]
+        self.prompt_templates = []
+        if prompts_dir.exists() and prompts_dir.is_dir():
+            self.prompt_templates = [p.stem for p in prompts_dir.glob("*.j2") if p.is_file()]
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio to text using OpenAI API."""
