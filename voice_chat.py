@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import base64
 from pathlib import Path
 
 import gradio as gr
@@ -142,8 +143,16 @@ def create_voice_chat_interface() -> gr.Blocks:
         sound_path = sound_effects.play_sound_effect(effect_name)
         if not sound_path:
             return ""
-
-        return f'<audio src="/file={sound_path}" autoplay style="display:none"></audio>'
+        # Embed sound effect as base64 to avoid missing static file routes
+        try:
+            with open(sound_path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode('utf-8')
+            # Use data URI for audio playback
+            return f'<audio src="data:audio/mpeg;base64,{b64}" autoplay style="display:none"></audio>'
+        except Exception as e:
+            logger.warning(f"Failed to embed sound effect '{effect_name}': {e}")
+            return ""
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
         gr.Markdown("# Voice Chat with OpenAI")
