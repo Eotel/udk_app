@@ -3,6 +3,7 @@
 import base64
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import gradio as gr
@@ -122,10 +123,12 @@ class VoiceChat:
         history = self.state.conversation_history
         # Determine starting index: skip system message at index 0
         start = 1 if history and history[0].role == "system" else 0
-        chat_history = []
-        for i in range(start, len(history), 2):
-            if i + 1 < len(history):
-                chat_history.append((history[i].content, history[i + 1].content))
+        # Build chat history tuples for UI
+        chat_history = [
+            (history[i].content, history[i + 1].content)
+            for i in range(start, len(history), 2)
+            if i + 1 < len(history)
+        ]
 
         return user_text, audio_output, chat_history
 
@@ -188,7 +191,12 @@ def create_voice_chat_interface() -> gr.Blocks:
             return ""
         # Encode as base64 and use data URI for audio playback
         b64 = base64.b64encode(data).decode("utf-8")
-        return f'<audio src="data:audio/mpeg;base64,{b64}" autoplay style="display:none"></audio>'
+        # Include a timestamp attribute to force re-render on repeated clicks
+        ts = int(time.time() * 1000)
+        return (
+            f'<audio src="data:audio/mpeg;base64,{b64}" '
+            f'data-ts="{ts}" autoplay style="display:none"></audio>'
+        )
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
         gr.Markdown("# Voice Chat with OpenAI")
