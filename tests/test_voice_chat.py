@@ -158,4 +158,8 @@ class TestVoiceChat:
 
             assert result[0] == "How are you?"
             assert result[1] == "/tmp/response.mp3"
-            assert result[2] == [("Hello", "Hi there")]
+            # Expect list of message dicts for user and assistant
+            assert result[2] == [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]

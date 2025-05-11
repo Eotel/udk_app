@@ -3,6 +3,7 @@
 import base64
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import gradio as gr
@@ -28,14 +29,19 @@ class VoiceChat:
         self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.state = VoiceChatState()
         self.sound_effects = SoundEffects()
-        # Setup Jinja2 environment for prompt templates
-        prompts_dir = Path("prompts")
+        base_dir = Path(__file__).parent
+        prompts_dir = base_dir / "prompts"
+        if not prompts_dir.exists():
+            logger.warning(f"Prompts directory not found at {prompts_dir}")
         self.jinja_env = Environment(
-            loader=FileSystemLoader(str(prompts_dir)),
-            autoescape=select_autoescape()
+            loader=FileSystemLoader(str(prompts_dir)), autoescape=select_autoescape()
         )
         # Discover available prompt templates
-        self.prompt_templates = [p.stem for p in prompts_dir.glob("*.j2") if p.is_file()]
+        self.prompt_templates = []
+        if prompts_dir.exists() and prompts_dir.is_dir():
+            self.prompt_templates = [
+                p.stem for p in prompts_dir.glob("*.j2") if p.is_file()
+            ]
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio to text using OpenAI API."""
@@ -112,21 +118,19 @@ class VoiceChat:
 
         return self.process_input(text_input)
 
-    def process_input(self, user_text: str) -> tuple[str, str, list]:
-        """Process user input (text or transcribed voice) and return the response."""
+    def process_input(self, user_text: str) -> tuple[str, str, list[dict]]:
+        """Process user input (voice or text) and return the response and chat history."""
+        # Generate assistant response and add to conversation state
         response_text = self.generate_response(user_text)
-
+        # Synthesize speech for the response
         audio_output = self.synthesize_speech(response_text)
 
-        # Build chat history for UI, skipping initial system prompt if present
-        history = self.state.conversation_history
-        # Determine starting index: skip system message at index 0
-        start = 1 if history and history[0].role == "system" else 0
-        chat_history = []
-        for i in range(start, len(history), 2):
-            if i + 1 < len(history):
-                chat_history.append((history[i].content, history[i + 1].content))
-
+        # Build chat history entries for UI, excluding system prompts
+        chat_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in self.state.conversation_history
+            if msg.role in ("user", "assistant")
+        ]
         return user_text, audio_output, chat_history
 
     def load_prompt(self, template_name: str, context: dict | None = None) -> None:
@@ -139,29 +143,64 @@ class VoiceChat:
             logger.error(f"Failed to load prompt template '{template_name}': {e}")
             return
         # Reset conversation history with a system message containing the prompt
-        self.state.conversation_history = [
-            ChatMessage(role="system", content=rendered)
-        ]
+        self.state.conversation_history = [ChatMessage(role="system", content=rendered)]
         logger.info(f"Prompt template '{template_name}' loaded")
 
 
 def create_voice_chat_interface() -> gr.Blocks:
     """Create a Gradio interface for voice chat."""
-    voice_chat = VoiceChat()
-    sound_effects = voice_chat.sound_effects
-    available_effects = sound_effects.get_available_sound_effects()
-    # Prompt template selection setup
-    available_prompts = voice_chat.prompt_templates
+    # Initialize per-room VoiceChat instances in a closure
+    default_room = "default"
+    voice_chats: dict[str, VoiceChat] = {}
+    vc_default = VoiceChat()
+    available_prompts = vc_default.prompt_templates
     default_prompt = available_prompts[0] if available_prompts else None
-    # Load default prompt if available
     if default_prompt:
-        voice_chat.load_prompt(default_prompt)
+        vc_default.load_prompt(default_prompt)
+    voice_chats[default_room] = vc_default
 
-    def select_prompt(template_name: str) -> list:
-        """Switch prompt template and reset chat history."""
-        voice_chat.load_prompt(template_name)
-        # Return empty chat history to clear UI
+    # Get sound effects and available effects from the default instance
+    sound_effects = vc_default.sound_effects
+    available_effects = sound_effects.get_available_sound_effects()
+
+    def select_prompt(template_name: str, room_name: str) -> list[dict]:
+        """Switch prompt template for the current room and clear UI history."""
+        # Load the selected prompt into the room's VoiceChat
+        vc = voice_chats.get(room_name)
+        if vc:
+            vc.load_prompt(template_name)
+        # Return empty chat history to reset UI
         return []
+
+    # Callback to create a new chat room
+    def create_room_fn(new_room: str, cur_room: str) -> tuple[dict, str]:
+        if new_room and new_room not in voice_chats:
+            vc = VoiceChat()
+            if default_prompt:
+                vc.load_prompt(default_prompt)
+            voice_chats[new_room] = vc
+        room = new_room or cur_room
+        # Return updated dropdown and new room
+        return (
+            gr.update(choices=list(voice_chats.keys()), value=room),
+            room,
+        )
+
+    # Callback to play sound effect for the current room
+    def play_sound_effect_room(effect_name: str, room_name: str) -> str:
+        vc = voice_chats.get(room_name)
+        if not vc:
+            return ""
+        sound_path = vc.sound_effects.play_sound_effect(effect_name)
+        if not sound_path:
+            return ""
+        data = Path(sound_path).read_bytes()
+        b64 = base64.b64encode(data).decode("utf-8")
+        ts = int(time.time() * 1000)
+        return (
+            f'<audio src="data:audio/mpeg;base64,{b64}" '
+            f'data-ts="{ts}" autoplay style="display:none"></audio>'
+        )
 
     def play_sound_effect(effect_name: str) -> str:
         """Play a sound effect and return HTML with audio element.
@@ -188,9 +227,31 @@ def create_voice_chat_interface() -> gr.Blocks:
             return ""
         # Encode as base64 and use data URI for audio playback
         b64 = base64.b64encode(data).decode("utf-8")
-        return f'<audio src="data:audio/mpeg;base64,{b64}" autoplay style="display:none"></audio>'
+        # Include a timestamp attribute to force re-render on repeated clicks
+        ts = int(time.time() * 1000)
+        return (
+            f'<audio src="data:audio/mpeg;base64,{b64}" '
+            f'data-ts="{ts}" autoplay style="display:none"></audio>'
+        )
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
+        # State for current room name
+        state_room = gr.State(default_room)
+        # Chat room selection and creation
+        with gr.Row():
+            room_selector = gr.Dropdown(
+                choices=[default_room],
+                value=default_room,
+                label="Chat Room",
+            )
+            new_room_name = gr.Textbox(label="New Room Name")
+            new_room_button = gr.Button("Create Room")
+            # Wire up room creation
+        new_room_button.click(
+            fn=create_room_fn,
+            inputs=[new_room_name, state_room],
+            outputs=[room_selector, state_room],
+        )
         gr.Markdown("# Voice Chat with OpenAI")
         gr.Markdown(
             "Speak into the microphone or type your message to get a voice response."
@@ -231,37 +292,43 @@ def create_voice_chat_interface() -> gr.Blocks:
                         button = gr.Button(f"{effect_name.capitalize()}")
                         sound_buttons.append((button, effect_name))
 
-        chat_history = gr.Chatbot(label="Chat History")
+        chat_history = gr.Chatbot(label="Chat History", type="messages")
         # Connect prompt selector to clear and load new prompt
         if available_prompts:
             prompt_selector.change(
                 fn=select_prompt,
-                inputs=[prompt_selector],
+                inputs=[prompt_selector, state_room],
                 outputs=[chat_history],
             )
 
+        # Process voice input per room
+        # Process voice input per room
         audio_input.change(
-            fn=voice_chat.process_voice_input,
-            inputs=audio_input,
+            fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
+            inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
+        # Process text input per room
+        # Process text input per room
         text_input.submit(
-            fn=voice_chat.process_text_input,
-            inputs=text_input,
+            fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
         submit_button.click(
-            fn=voice_chat.process_text_input,
-            inputs=text_input,
+            fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
+        # Sound effect buttons per room
         for button, effect_name in sound_buttons:
+            # Each click plays the named effect in the current room
             button.click(
-                fn=lambda name=effect_name: play_sound_effect(name),
-                inputs=None,
+                fn=lambda room, name=effect_name: play_sound_effect_room(name, room),
+                inputs=[state_room],
                 outputs=sound_effect_output,
             )
 
