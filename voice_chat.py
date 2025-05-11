@@ -149,51 +149,48 @@ class VoiceChat:
 
 def create_voice_chat_interface() -> gr.Blocks:
     """Create a Gradio interface for voice chat."""
-    # Initialize per-room VoiceChat instances
+    # Initialize per-room VoiceChat instances in a closure
     default_room = "default"
     voice_chats: dict[str, VoiceChat] = {}
-    # Create the default room
     vc_default = VoiceChat()
-    # Load default prompt if available
     available_prompts = vc_default.prompt_templates
     default_prompt = available_prompts[0] if available_prompts else None
     if default_prompt:
         vc_default.load_prompt(default_prompt)
     voice_chats[default_room] = vc_default
-    # UI state: current room and mapping of rooms to VoiceChat
+    # UI state: current room name
     state_room = gr.State(default_room)
-    state_voice_chats = gr.State(voice_chats)
 
     # Get sound effects and available effects from the default instance
     sound_effects = vc_default.sound_effects
     available_effects = sound_effects.get_available_sound_effects()
 
-    def select_prompt(template_name: str, room_name: str, vcs: dict[str, VoiceChat]) -> list[dict]:
+    def select_prompt(template_name: str, room_name: str) -> list[dict]:
         """Switch prompt template for the current room and clear UI history."""
         # Load the selected prompt into the room's VoiceChat
-        vc = vcs.get(room_name)
+        vc = voice_chats.get(room_name)
         if vc:
             vc.load_prompt(template_name)
         # Return empty chat history to reset UI
         return []
 
     # Callback to create a new chat room
-    def create_room_fn(new_room: str, cur_room: str, vcs: dict[str, VoiceChat]) -> tuple[gr.components.Dropdown.update, str, dict[str, VoiceChat]]:
-        if new_room and new_room not in vcs:
+    def create_room_fn(new_room: str, cur_room: str) -> tuple[gr.components.Dropdown.update, str]:
+        if new_room and new_room not in voice_chats:
             vc = VoiceChat()
             if default_prompt:
                 vc.load_prompt(default_prompt)
-            vcs[new_room] = vc
-        # Update dropdown choices and set new current room
+            voice_chats[new_room] = vc
+        room = new_room or cur_room
+        # Return updated dropdown and new room
         return (
-            gr.Dropdown.update(choices=list(vcs.keys()), value=new_room or cur_room),
-            new_room or cur_room,
-            vcs,
+            gr.Dropdown.update(choices=list(voice_chats.keys()), value=room),
+            room,
         )
 
-    # Callback to play sound effect per room
-    def play_sound_effect_room(effect_name: str, room_name: str, vcs: dict[str, VoiceChat]) -> str:
-        vc = vcs.get(room_name)
+    # Callback to play sound effect for the current room
+    def play_sound_effect_room(effect_name: str, room_name: str) -> str:
+        vc = voice_chats.get(room_name)
         if not vc:
             return ""
         sound_path = vc.sound_effects.play_sound_effect(effect_name)
@@ -250,11 +247,11 @@ def create_voice_chat_interface() -> gr.Blocks:
             new_room_name = gr.Textbox(label="New Room Name")
             new_room_button = gr.Button("Create Room")
             # Wire up room creation
-            new_room_button.click(
-                fn=create_room_fn,
-                inputs=[new_room_name, state_room, state_voice_chats],
-                outputs=[room_selector, state_room, state_voice_chats],
-            )
+        new_room_button.click(
+            fn=create_room_fn,
+            inputs=[new_room_name, state_room],
+            outputs=[room_selector, state_room],
+        )
         gr.Markdown("# Voice Chat with OpenAI")
         gr.Markdown(
             "Speak into the microphone or type your message to get a voice response."
@@ -300,27 +297,29 @@ def create_voice_chat_interface() -> gr.Blocks:
         if available_prompts:
             prompt_selector.change(
                 fn=select_prompt,
-                inputs=[prompt_selector, state_room, state_voice_chats],
+                inputs=[prompt_selector, state_room],
                 outputs=[chat_history],
             )
 
         # Process voice input per room
+        # Process voice input per room
         audio_input.change(
-            fn=lambda audio, room, vcs: vcs[room].process_voice_input(audio),
-            inputs=[audio_input, state_room, state_voice_chats],
+            fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
+            inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
         # Process text input per room
+        # Process text input per room
         text_input.submit(
-            fn=lambda text, room, vcs: vcs[room].process_text_input(text),
-            inputs=[text_input, state_room, state_voice_chats],
+            fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
         submit_button.click(
-            fn=lambda text, room, vcs: vcs[room].process_text_input(text),
-            inputs=[text_input, state_room, state_voice_chats],
+            fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
@@ -328,8 +327,8 @@ def create_voice_chat_interface() -> gr.Blocks:
         for button, effect_name in sound_buttons:
             # Each click plays the named effect in the current room
             button.click(
-                fn=lambda room, vcs, name=effect_name: play_sound_effect_room(name, room, vcs),
-                inputs=[state_room, state_voice_chats],
+                fn=lambda room, name=effect_name: play_sound_effect_room(name, room),
+                inputs=[state_room],
                 outputs=sound_effect_output,
             )
 
