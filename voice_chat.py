@@ -1,12 +1,13 @@
 """Voice chat implementation using OpenAI API and Gradio."""
 
+import base64
 import os
 import tempfile
-import base64
 from pathlib import Path
 
 import gradio as gr
 import openai
+from jinja2 import Environment, FileSystemLoader, TemplateError, select_autoescape
 from loguru import logger
 
 from models import (
@@ -27,6 +28,14 @@ class VoiceChat:
         self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.state = VoiceChatState()
         self.sound_effects = SoundEffects()
+        # Setup Jinja2 environment for prompt templates
+        prompts_dir = Path("prompts")
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(str(prompts_dir)),
+            autoescape=select_autoescape()
+        )
+        # Discover available prompt templates
+        self.prompt_templates = [p.stem for p in prompts_dir.glob("*.j2") if p.is_file()]
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio to text using OpenAI API."""
@@ -120,12 +129,39 @@ class VoiceChat:
 
         return user_text, audio_output, chat_history
 
+    def load_prompt(self, template_name: str, context: dict | None = None) -> None:
+        """Switch prompt template and reset conversation state."""
+        template_file = f"{template_name}.j2"
+        try:
+            template = self.jinja_env.get_template(template_file)
+            rendered = template.render(**(context or {}))
+        except TemplateError as e:
+            logger.error(f"Failed to load prompt template '{template_name}': {e}")
+            return
+        # Reset conversation history with a system message containing the prompt
+        self.state.conversation_history = [
+            ChatMessage(role="system", content=rendered)
+        ]
+        logger.info(f"Prompt template '{template_name}' loaded")
+
 
 def create_voice_chat_interface() -> gr.Blocks:
     """Create a Gradio interface for voice chat."""
     voice_chat = VoiceChat()
     sound_effects = voice_chat.sound_effects
     available_effects = sound_effects.get_available_sound_effects()
+    # Prompt template selection setup
+    available_prompts = voice_chat.prompt_templates
+    default_prompt = available_prompts[0] if available_prompts else None
+    # Load default prompt if available
+    if default_prompt:
+        voice_chat.load_prompt(default_prompt)
+
+    def select_prompt(template_name: str) -> list:
+        """Switch prompt template and reset chat history."""
+        voice_chat.load_prompt(template_name)
+        # Return empty chat history to clear UI
+        return []
 
     def play_sound_effect(effect_name: str) -> str:
         """Play a sound effect and return HTML with audio element.
@@ -145,20 +181,27 @@ def create_voice_chat_interface() -> gr.Blocks:
             return ""
         # Embed sound effect as base64 to avoid missing static file routes
         try:
-            with open(sound_path, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode('utf-8')
-            # Use data URI for audio playback
-            return f'<audio src="data:audio/mpeg;base64,{b64}" autoplay style="display:none"></audio>'
-        except Exception as e:
-            logger.warning(f"Failed to embed sound effect '{effect_name}': {e}")
+            # Read binary data from file
+            data = Path(sound_path).read_bytes()
+        except OSError as e:
+            logger.warning(f"Failed to read sound effect '{effect_name}': {e}")
             return ""
+        # Encode as base64 and use data URI for audio playback
+        b64 = base64.b64encode(data).decode("utf-8")
+        return f'<audio src="data:audio/mpeg;base64,{b64}" autoplay style="display:none"></audio>'
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
         gr.Markdown("# Voice Chat with OpenAI")
         gr.Markdown(
             "Speak into the microphone or type your message to get a voice response."
         )
+        # Prompt template dropdown
+        if available_prompts:
+            prompt_selector = gr.Dropdown(
+                choices=available_prompts,
+                value=default_prompt,
+                label="Prompt Template",
+            )
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -189,6 +232,13 @@ def create_voice_chat_interface() -> gr.Blocks:
                         sound_buttons.append((button, effect_name))
 
         chat_history = gr.Chatbot(label="Chat History")
+        # Connect prompt selector to clear and load new prompt
+        if available_prompts:
+            prompt_selector.change(
+                fn=select_prompt,
+                inputs=[prompt_selector],
+                outputs=[chat_history],
+            )
 
         audio_input.change(
             fn=voice_chat.process_voice_input,
