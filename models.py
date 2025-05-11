@@ -41,8 +41,8 @@ class ChatRequest(BaseModel):
         description="The list of messages in the conversation",
     )
     model: str = Field(
-        default="gpt-4o",
-        description="The model to use for chat completion",
+        default="gpt-4.1",
+        description="The model to use for chat completion (e.g., gpt-4.1)",
     )
     temperature: float = Field(
         default=0.7,
