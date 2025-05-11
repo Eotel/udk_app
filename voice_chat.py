@@ -15,6 +15,7 @@ from models import (
     TranscriptionRequest,
     VoiceChatState,
 )
+from sound_effects import SoundEffects
 
 
 class VoiceChat:
@@ -24,6 +25,7 @@ class VoiceChat:
         """Initialize the voice chat with OpenAI API key."""
         self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         self.state = VoiceChatState()
+        self.sound_effects = SoundEffects()
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio to text using OpenAI API."""
@@ -121,6 +123,23 @@ class VoiceChat:
 def create_voice_chat_interface() -> gr.Blocks:
     """Create a Gradio interface for voice chat."""
     voice_chat = VoiceChat()
+    sound_effects = voice_chat.sound_effects
+    available_effects = sound_effects.get_available_sound_effects()
+
+    def play_sound_effect(effect_name: str) -> str:
+        """Play a sound effect and return its path.
+
+        This function allows simultaneous playback with voice narration
+        by returning the sound effect path.
+
+        Args:
+            effect_name: Name of the sound effect to play
+
+        Returns:
+            Path to the sound effect file
+
+        """
+        return sound_effects.play_sound_effect(effect_name)
 
     with gr.Blocks(title="Voice Chat with OpenAI") as interface:
         gr.Markdown("# Voice Chat with OpenAI")
@@ -146,6 +165,15 @@ def create_voice_chat_interface() -> gr.Blocks:
 
             with gr.Column(scale=1):
                 audio_output = gr.Audio(label="AI Voice Response")
+                sound_effect_output = gr.Audio(label="Sound Effect", visible=False)
+
+                gr.Markdown("## Sound Effects")
+                sound_buttons = []
+
+                with gr.Row():
+                    for effect_name in available_effects:
+                        button = gr.Button(f"{effect_name.capitalize()}")
+                        sound_buttons.append((button, effect_name))
 
         chat_history = gr.Chatbot(label="Chat History")
 
@@ -166,5 +194,12 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=text_input,
             outputs=[text_output, audio_output, chat_history],
         )
+
+        for button, effect_name in sound_buttons:
+            button.click(
+                fn=lambda name=effect_name: play_sound_effect(name),
+                inputs=None,
+                outputs=sound_effect_output,
+            )
 
     return interface
