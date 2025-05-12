@@ -315,6 +315,36 @@ class TestVoiceChat:
 
         with (
             patch.object(voice_chat, "generate_response") as mock_generate,
+            patch.object(voice_chat, "_get_chat_history") as mock_get_history,
+        ):
+            mock_generate.return_value = "I'm doing well, thank you for asking!"
+            mock_get_history.return_value = [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]
+
+            result = voice_chat.process_input("How are you?")
+
+            mock_generate.assert_called_once_with("How are you?")
+            mock_get_history.assert_called_once()
+
+            assert result[0] == "How are you?"
+            assert result[1] is None  # No audio output in immediate response
+            # Expect list of message dicts for user and assistant
+            assert result[2] == [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]
+            
+    def test_process_input_with_tts(self, voice_chat: VoiceChat) -> None:
+        """Test input processing with TTS."""
+        voice_chat.state.conversation_history = [
+            ChatMessage(role="user", content="Hello"),
+            ChatMessage(role="assistant", content="Hi there"),
+        ]
+
+        with (
+            patch.object(voice_chat, "generate_response") as mock_generate,
             patch.object(voice_chat, "synthesize_speech") as mock_synthesize,
             patch.object(voice_chat, "_get_chat_history") as mock_get_history,
         ):
@@ -325,7 +355,7 @@ class TestVoiceChat:
                 {"role": "assistant", "content": "Hi there"},
             ]
 
-            result = voice_chat.process_input("How are you?")
+            result = voice_chat.process_input_with_tts("How are you?")
 
             mock_generate.assert_called_once_with("How are you?")
             mock_synthesize.assert_called_once_with(

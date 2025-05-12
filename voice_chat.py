@@ -344,7 +344,7 @@ class VoiceChat:
             # If all fallbacks fail, yield empty response
             yield "", None, self._get_chat_history()
 
-    def synthesize_speech(self, text: str) -> str:
+    def synthesize_speech(self, text: str) -> str | None:
         """Synthesize speech from text using OpenAI API."""
         # Skip synthesis if no text provided
         if not text or not text.strip():
@@ -379,7 +379,9 @@ class VoiceChat:
         logger.info(f"Speech synthesized to {audio_path}")
         return str(audio_path)
 
-    def process_voice_input(self, audio_input: str | tuple) -> tuple[str, str, list]:
+    def process_voice_input(
+        self, audio_input: str | tuple
+    ) -> tuple[str, str | None, list]:
         """Process voice input and return the response."""
         audio_path = audio_input[0] if isinstance(audio_input, tuple) else audio_input
 
@@ -387,7 +389,7 @@ class VoiceChat:
 
         return self.process_input(user_text)
 
-    def process_text_input(self, text_input: str) -> tuple[str, str, list]:
+    def process_text_input(self, text_input: str) -> tuple[str, str | None, list]:
         """Process text input and return the response."""
         logger.info(f"Processing text input: {text_input}")
 
@@ -401,14 +403,24 @@ class VoiceChat:
             if msg.role in ("user", "assistant")
         ]
 
-    def process_input(self, user_text: str) -> tuple[str, str, list[dict]]:
+    def process_input(self, user_text: str) -> tuple[str, str | None, list[dict]]:
         """Process user input (voice or text) and return the response and chat history."""
+        # Generate assistant response and add to conversation state
+        self.generate_response(user_text)
+
+        # Return formatted chat history for UI immediately, without waiting for TTS
+        return user_text, None, self._get_chat_history()
+
+    def process_input_with_tts(
+        self, user_text: str
+    ) -> tuple[str, str | None, list[dict]]:
+        """Process user input and return the response with TTS audio."""
         # Generate assistant response and add to conversation state
         response_text = self.generate_response(user_text)
         # Synthesize speech for the response (skip if empty)
         audio_output = self.synthesize_speech(response_text) if response_text else None
 
-        # Return formatted chat history for UI
+        # Return formatted chat history for UI with audio
         return user_text, audio_output, self._get_chat_history()
 
     def process_input_stream(
@@ -631,19 +643,36 @@ def create_voice_chat_interface() -> gr.Blocks:
             fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda audio, room: voice_chats[room].process_input_with_tts(
+                voice_chats[room].transcribe_audio(
+                    audio[0] if isinstance(audio, tuple) else audio
+                )
+            ),
+            inputs=[audio_input, state_room],
+            outputs=[None, audio_output, None],
         )
 
         # Process text input per room without streaming
+        # First update UI immediately with text response
         text_input.submit(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda text, room: voice_chats[room].process_input_with_tts(text),
+            inputs=[text_input, state_room],
+            outputs=[None, audio_output, None],
         )
 
         submit_button.click(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda text, room: voice_chats[room].process_input_with_tts(text),
+            inputs=[text_input, state_room],
+            outputs=[None, audio_output, None],
         )
 
         # Sound effect buttons per room
