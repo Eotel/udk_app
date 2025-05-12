@@ -3,6 +3,7 @@
 import gradio as gr
 from loguru import logger
 
+from settings import settings
 from voice_chat import create_voice_chat_interface
 
 demo = create_voice_chat_interface()
@@ -11,7 +12,13 @@ demo = create_voice_chat_interface()
 def main() -> None:
     """Run the main application."""
     logger.info("Starting voice chat application")
-    demo.launch()
+    if settings.debug:
+        logger.info("Running in debug mode")
+    demo.launch(
+        server_name=settings.host,
+        server_port=settings.port,
+        debug=settings.debug,
+    )
 
 
 if __name__ == "__main__":

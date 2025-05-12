@@ -991,6 +991,7 @@ dependencies = [
     { name = "loguru" },
     { name = "openai" },
     { name = "openai-agents" },
+    { name = "pydantic-settings" },
 ]
 
 [package.dev-dependencies]
@@ -1006,6 +1007,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "openai", specifier = ">=1.78.0" },
     { name = "openai-agents", specifier = ">=0.0.14" },
+    { name = "pydantic-settings", specifier = ">=2.9.1" },
 ]
 
 [package.metadata.requires-dev]

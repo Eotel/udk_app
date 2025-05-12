@@ -71,12 +71,24 @@ class SpeechRequest(BaseModel):
         description="The text to convert to speech",
     )
     model: str = Field(
-        default="tts-1",
+        default="gpt-4o-mini-tts",
         description="The model to use for speech synthesis",
     )
     voice: str = Field(
-        default="alloy",
+        default="sage",
         description="The voice to use for speech synthesis",
+    )
+    instructions: str = Field(
+        default="",
+        description="Instructions for how the audio should be generated",
+    )
+    streaming: bool = Field(
+        default=True,
+        description="Whether to use streaming mode for audio generation",
+    )
+    response_format: str = Field(
+        default="mp3",
+        description="The format of the audio response (mp3 or pcm)",
     )
 
 

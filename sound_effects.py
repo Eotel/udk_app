@@ -1,23 +1,28 @@
 """Sound effects module for the UDK app."""
 
-import os
 from pathlib import Path
 
 import gradio as gr
 from loguru import logger
 
+from settings import settings
+
 
 class SoundEffects:
     """Sound effects manager for the UDK app."""
 
-    def __init__(self, sounds_dir: str = "assets/sounds") -> None:
+    def __init__(self, sounds_dir: Path | None = None) -> None:
         """Initialize the sound effects manager.
 
         Args:
-            sounds_dir: Directory containing sound effect files
+            sounds_dir: Directory containing sound effect files, defaults to settings.sounds_dir
 
         """
-        self.sounds_dir = Path(sounds_dir)
+        # Accept either a Path or a string for sounds_dir
+        if sounds_dir is not None:
+            self.sounds_dir = Path(sounds_dir)
+        else:
+            self.sounds_dir = settings.sounds_dir
         self.sound_effects: dict[str, str] = self._load_sound_effects()
 
     def _load_sound_effects(self) -> dict[str, str]:
