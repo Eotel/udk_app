@@ -30,8 +30,22 @@ def mock_openai_client() -> Generator[MagicMock, None, None]:
         mock_speech.stream_to_file = MagicMock()
 
         client_instance = mock_client.return_value
+        # Mock transcription endpoint
         client_instance.audio.transcriptions.create.return_value = mock_transcription
+        # Legacy chat completions (no longer used directly)
         client_instance.chat.completions.create.return_value = mock_completion
+        # Mock unified Responses API for chat completion
+        # Prepare a fake response with output items
+        mock_content = MagicMock()
+        mock_content.type = "output_text"
+        mock_content.text = mock_choice.message.content
+        mock_output_item = MagicMock()
+        mock_output_item.type = "message"
+        mock_output_item.content = [mock_content]
+        mock_response = MagicMock()
+        mock_response.output = [mock_output_item]
+        client_instance.responses.create.return_value = mock_response
+        # Mock speech synthesis endpoint
         client_instance.audio.speech.create.return_value = mock_speech
 
         yield client_instance
@@ -84,7 +98,8 @@ class TestVoiceChat:
         user_message = "Hello, how are you?"
         result = voice_chat.generate_response(user_message)
 
-        mock_openai_client.chat.completions.create.assert_called_once()
+        # Ensure we called the unified Responses API
+        mock_openai_client.responses.create.assert_called_once()
 
         assert result == "I'm doing well, thank you for asking!"
 

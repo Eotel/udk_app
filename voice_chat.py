@@ -1,7 +1,7 @@
 """Voice chat implementation using OpenAI API and Gradio."""
+from __future__ import annotations
 
 import base64
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -18,6 +18,7 @@ from models import (
     TranscriptionRequest,
     VoiceChatState,
 )
+from settings import settings
 from sound_effects import SoundEffects
 
 
@@ -26,27 +27,38 @@ class VoiceChat:
 
     def __init__(self) -> None:
         """Initialize the voice chat with OpenAI API key."""
-        self.client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        self.client = openai.OpenAI(api_key=settings.openai_api_key)
         self.state = VoiceChatState()
         self.sound_effects = SoundEffects()
-        base_dir = Path(__file__).parent
-        prompts_dir = base_dir / "prompts"
-        if not prompts_dir.exists():
-            logger.warning(f"Prompts directory not found at {prompts_dir}")
+        if not settings.prompts_dir.exists():
+            logger.warning(f"Prompts directory not found at {settings.prompts_dir}")
         self.jinja_env = Environment(
-            loader=FileSystemLoader(str(prompts_dir)), autoescape=select_autoescape()
+            loader=FileSystemLoader(str(settings.prompts_dir)),
+            autoescape=select_autoescape(),
         )
         # Discover available prompt templates
         self.prompt_templates = []
-        if prompts_dir.exists() and prompts_dir.is_dir():
+        if settings.prompts_dir.exists() and settings.prompts_dir.is_dir():
             self.prompt_templates = [
-                p.stem for p in prompts_dir.glob("*.j2") if p.is_file()
+                p.stem for p in settings.prompts_dir.glob("*.j2") if p.is_file()
             ]
+
+        # Load TTS instructions from template if available
+        self.tts_instructions = ""
+        if "instructions" in self.prompt_templates:
+            try:
+                template = self.jinja_env.get_template("instructions.j2")
+                self.tts_instructions = template.render()
+                logger.info("Loaded TTS instructions template")
+            except TemplateError as e:
+                logger.error(f"Failed to load TTS instructions template: {e}")
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio to text using OpenAI API."""
         logger.info(f"Transcribing audio from {audio_path}")
-        request = TranscriptionRequest(file_path=audio_path)
+        request = TranscriptionRequest(
+            file_path=audio_path, model=settings.transcription_model
+        )
 
         with Path(request.file_path).open("rb") as audio_file:
             response = self.client.audio.transcriptions.create(
@@ -66,18 +78,39 @@ class VoiceChat:
             ChatMessage(role="user", content=user_message),
         )
 
-        request = ChatRequest(messages=self.state.conversation_history)
-
-        response = self.client.chat.completions.create(
-            model=request.model,
-            messages=[
-                {"role": msg.role, "content": msg.content} for msg in request.messages
-            ],
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
+        # Prepare chat request parameters
+        request = ChatRequest(
+            messages=self.state.conversation_history,
+            model=settings.chat_model,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
         )
-
-        response_text = response.choices[0].message.content
+        # Convert conversation history into Responses API input items
+        input_items = [
+            {
+                "role": msg.role,
+                "content": [{"text": msg.content, "type": "input_text"}],
+                "type": "message",
+            }
+            for msg in request.messages
+        ]
+        # Call the unified Responses API for chat completion
+        resp = self.client.responses.create(
+            model=request.model,
+            input=input_items,
+            temperature=request.temperature,
+            max_output_tokens=request.max_tokens,
+        )
+        # Extract the assistant's generated text from the response
+        response_text = ""
+        for item in getattr(resp, "output", []):
+            if getattr(item, "type", None) == "message":
+                for content in getattr(item, "content", []):
+                    if getattr(content, "type", None) == "output_text":
+                        response_text = getattr(content, "text", "")
+                        break
+            if response_text:
+                break
 
         self.state.conversation_history.append(
             ChatMessage(role="assistant", content=response_text),
@@ -88,18 +121,35 @@ class VoiceChat:
 
     def synthesize_speech(self, text: str) -> str:
         """Synthesize speech from text using OpenAI API."""
-        logger.info(f"Synthesizing speech for: {text}")
-        request = SpeechRequest(text=text)
+        # Skip synthesis if no text provided
+        if not text or not text.strip():
+            logger.warning("Empty response text; skipping speech synthesis")
+            return None
 
-        response = self.client.audio.speech.create(
-            model=request.model,
-            voice=request.voice,
-            input=request.text,
+        logger.info(f"Synthesizing speech for: {text}")
+        # Use the loaded instructions template if available, otherwise use settings value
+        tts_instructions = self.tts_instructions or settings.tts_instructions
+
+        request = SpeechRequest(
+            text=text,
+            model=settings.tts_model,
+            voice=settings.tts_voice,
+            instructions=tts_instructions,
+            streaming=settings.tts_streaming,
         )
 
         temp_dir = Path(tempfile.gettempdir())
-        audio_path = temp_dir / "response.mp3"
-        response.stream_to_file(str(audio_path))
+        audio_path = temp_dir / f"{time.strftime('%Y-%m-%d-%H-%M-%S')}.wav"
+
+        logger.info("Using streaming TTS mode")
+        with self.client.audio.speech.with_streaming_response.create(
+            model=request.model,
+            voice=request.voice,
+            input=request.text,
+            instructions=request.instructions,
+            response_format="wav",
+        ) as streaming_response:
+            streaming_response.stream_to_file(str(audio_path))
 
         logger.info(f"Speech synthesized to {audio_path}")
         return str(audio_path)
@@ -122,8 +172,8 @@ class VoiceChat:
         """Process user input (voice or text) and return the response and chat history."""
         # Generate assistant response and add to conversation state
         response_text = self.generate_response(user_text)
-        # Synthesize speech for the response
-        audio_output = self.synthesize_speech(response_text)
+        # Synthesize speech for the response (skip if empty)
+        audio_output = self.synthesize_speech(response_text) if response_text else None
 
         # Build chat history entries for UI, excluding system prompts
         chat_history = [
@@ -302,14 +352,12 @@ def create_voice_chat_interface() -> gr.Blocks:
             )
 
         # Process voice input per room
-        # Process voice input per room
         audio_input.change(
             fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
-        # Process text input per room
         # Process text input per room
         text_input.submit(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
