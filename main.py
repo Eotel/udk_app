@@ -16,8 +16,10 @@ def main() -> None:
         logger.info("Running in debug mode")
     demo.launch(
         server_name=settings.host,
-        server_port=settings.port,
+        server_port=7861,  # Use a different port
         debug=settings.debug,
+        share=False,  # Set to True to create a public URL
+        max_threads=40,  # More threads for better streaming
     )
 
 

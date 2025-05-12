@@ -1,9 +1,11 @@
 """Voice chat implementation using OpenAI API and Gradio."""
+
 from __future__ import annotations
 
 import base64
 import tempfile
 import time
+import typing
 from pathlib import Path
 
 import gradio as gr
@@ -86,14 +88,31 @@ class VoiceChat:
             max_tokens=settings.max_tokens,
         )
         # Convert conversation history into Responses API input items
-        input_items = [
-            {
-                "role": msg.role,
-                "content": [{"text": msg.content, "type": "input_text"}],
-                "type": "message",
-            }
-            for msg in request.messages
-        ]
+        # Ensure proper encoding for non-English text
+        input_items = []
+        for msg in request.messages:
+            # Ensure content is properly handled
+            try:
+                input_items.append(
+                    {
+                        "role": msg.role,
+                        "content": [{"text": msg.content, "type": "input_text"}],
+                        "type": "message",
+                    }
+                )
+                logger.debug(
+                    f"Added message with role {msg.role} and content preview: {msg.content[:20]}..."
+                )
+            except (TypeError, ValueError, UnicodeError) as ex:
+                logger.error(f"Error processing message {msg.role}: {ex}")
+                # Add simplified message if there are encoding issues
+                input_items.append(
+                    {
+                        "role": msg.role,
+                        "content": [{"text": str(msg.content), "type": "input_text"}],
+                        "type": "message",
+                    }
+                )
         # Call the unified Responses API for chat completion
         resp = self.client.responses.create(
             model=request.model,
@@ -118,6 +137,212 @@ class VoiceChat:
 
         logger.info(f"Generated response: {response_text}")
         return response_text
+
+    def generate_response_stream(
+        self, user_message: str
+    ) -> typing.Generator[tuple[str, str | None, list[dict]], None, None]:
+        """Generate a streaming response to the user message using OpenAI API.
+
+        Yields:
+            Tuples of (current_text, audio_output, chat_history) as the response is generated
+
+        """
+        logger.info(f"Generating streaming response to: {user_message}")
+
+        self.state.conversation_history.append(
+            ChatMessage(role="user", content=user_message),
+        )
+
+        # Prepare chat request parameters
+        request = ChatRequest(
+            messages=self.state.conversation_history,
+            model=settings.chat_model,
+            temperature=settings.temperature,
+            max_tokens=settings.max_tokens,
+        )
+        # Convert conversation history into Responses API input items
+        # Ensure proper encoding for non-English text
+        input_items = []
+        for msg in request.messages:
+            # Ensure content is properly handled
+            try:
+                input_items.append(
+                    {
+                        "role": msg.role,
+                        "content": [{"text": msg.content, "type": "input_text"}],
+                        "type": "message",
+                    }
+                )
+                logger.debug(
+                    f"Added message with role {msg.role} and content preview: {msg.content[:20]}..."
+                )
+            except (TypeError, ValueError, UnicodeError) as ex:
+                logger.error(f"Error processing message {msg.role}: {ex}")
+                # Add simplified message if there are encoding issues
+                input_items.append(
+                    {
+                        "role": msg.role,
+                        "content": [{"text": str(msg.content), "type": "input_text"}],
+                        "type": "message",
+                    }
+                )
+
+        # Call the unified Responses API for chat completion with streaming
+        streaming_response = ""
+        full_response = ""
+
+        # Use the new streaming parameter approach
+        stream = self.client.responses.create(
+            model=request.model,
+            input=input_items,
+            temperature=request.temperature,
+            max_output_tokens=request.max_tokens,
+            stream=True,  # Enable streaming
+        )
+
+        # Yield initial empty response to start the stream
+        yield "", None, self._get_chat_history()
+
+        try:
+            # Process the streaming response chunks
+            current_text = ""
+
+            # Iterate through streaming events
+            for chunk in stream:
+                # Handle response creation event
+                if hasattr(chunk, "created"):
+                    # The stream was created, log and continue
+                    logger.info(f"Stream created: {chunk.created}")
+                    continue
+
+                # Handle delta text updates
+                if hasattr(chunk, "output_text") and hasattr(
+                    chunk.output_text, "delta"
+                ):
+                    # Extract text from output_text.delta
+                    delta_text = chunk.output_text.delta
+                    if delta_text:
+                        # Accumulate text
+                        current_text += delta_text
+                        streaming_response = current_text
+                        full_response = current_text
+
+                        # Update chat history with current partial response
+                        current_history = self._get_chat_history()
+                        # Add or update the streaming response in history
+                        if current_history and current_history[-1]["role"] == "user":
+                            # Check if we already have an assistant response
+                            if (
+                                len(current_history) > 1
+                                and current_history[-2]["role"] == "assistant"
+                            ):
+                                # Update existing assistant message
+                                current_history[-2]["content"] = streaming_response
+                            else:
+                                # Add new assistant message
+                                current_history.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": streaming_response,
+                                    }
+                                )
+
+                        # Log the delta received
+                        logger.info(
+                            f"New delta: '{delta_text}' - Current length: {len(streaming_response)}"
+                        )
+
+                        # Yield updated text without audio yet
+                        yield streaming_response, None, current_history
+
+                # Handle completion event
+                elif hasattr(chunk, "completed"):
+                    logger.info(f"Stream completed: {chunk.completed}")
+                    break
+
+                # Handle error event
+                elif hasattr(chunk, "error"):
+                    error_msg = f"Stream error: {chunk.error}"
+                    logger.error(error_msg)
+                    # Don't raise, instead let fallback handle it
+                    break
+
+                # Small delay to allow UI to update
+                time.sleep(0.01)
+
+        except (openai.OpenAIError, ValueError, TypeError) as e:
+            logger.error(f"Error in streaming response: {e}")
+            # Fallback to non-streaming response
+            logger.info("Falling back to non-streaming response")
+
+            try:
+                non_streaming_resp = self.client.responses.create(
+                    model=request.model,
+                    input=input_items,
+                    temperature=request.temperature,
+                    max_output_tokens=request.max_tokens,
+                )
+            except (openai.OpenAIError, ValueError, TypeError) as ex:
+                logger.error(f"Fallback response failed: {ex}")
+                # Return empty for now, we'll try one more fallback at the end
+                yield "", None, self._get_chat_history()
+                return
+
+            # Extract text from non-streaming response
+            for item in getattr(non_streaming_resp, "output", []):
+                if getattr(item, "type", None) == "message":
+                    for content in getattr(item, "content", []):
+                        if getattr(content, "type", None) == "output_text":
+                            streaming_response = getattr(content, "text", "")
+                            full_response = streaming_response
+                            break
+
+            # Update history
+            current_history = self._get_chat_history()
+            if len(current_history) > 0 and current_history[-1]["role"] == "user":
+                current_history.append(
+                    {
+                        "role": "assistant",
+                        "content": streaming_response,
+                    }
+                )
+
+            # Yield the result
+            yield streaming_response, None, current_history
+
+        # Add the full response to conversation history
+        if full_response:
+            self.state.conversation_history.append(
+                ChatMessage(role="assistant", content=full_response),
+            )
+
+            # Generate audio only at the end of the text stream
+            audio_output = (
+                self.synthesize_speech(full_response) if full_response else None
+            )
+
+            # Final yield with complete text and audio
+            logger.info(f"Completed streaming response: {full_response}")
+            yield full_response, audio_output, self._get_chat_history()
+        else:
+            logger.warning("No response text generated from streaming API")
+            # Fallback to non-streaming response as a last resort if we got no text
+            try:
+                logger.info("Trying one last fallback to non-streaming response")
+                fallback_resp = self.generate_response(user_message)
+                if fallback_resp:
+                    logger.info(f"Got fallback response: {fallback_resp}")
+                    # Since generate_response already added to conversation history,
+                    # we just need to synthesize speech and yield
+                    audio_output = self.synthesize_speech(fallback_resp)
+                    yield fallback_resp, audio_output, self._get_chat_history()
+                    # Return to avoid the empty yield at the end
+                    return
+            except (openai.OpenAIError, ValueError, TypeError, RuntimeError) as ex:
+                logger.error(f"Even fallback non-streaming response failed: {ex}")
+
+            # If all fallbacks fail, yield empty response
+            yield "", None, self._get_chat_history()
 
     def synthesize_speech(self, text: str) -> str:
         """Synthesize speech from text using OpenAI API."""
@@ -168,6 +393,14 @@ class VoiceChat:
 
         return self.process_input(text_input)
 
+    def _get_chat_history(self) -> list[dict]:
+        """Get the current chat history for UI display, excluding system prompts."""
+        return [
+            {"role": msg.role, "content": msg.content}
+            for msg in self.state.conversation_history
+            if msg.role in ("user", "assistant")
+        ]
+
     def process_input(self, user_text: str) -> tuple[str, str, list[dict]]:
         """Process user input (voice or text) and return the response and chat history."""
         # Generate assistant response and add to conversation state
@@ -175,13 +408,23 @@ class VoiceChat:
         # Synthesize speech for the response (skip if empty)
         audio_output = self.synthesize_speech(response_text) if response_text else None
 
-        # Build chat history entries for UI, excluding system prompts
-        chat_history = [
-            {"role": msg.role, "content": msg.content}
-            for msg in self.state.conversation_history
-            if msg.role in ("user", "assistant")
-        ]
-        return user_text, audio_output, chat_history
+        # Return formatted chat history for UI
+        return user_text, audio_output, self._get_chat_history()
+
+    def process_input_stream(
+        self, user_text: str
+    ) -> typing.Generator[tuple[str, str | None, list[dict]], None, None]:
+        """Process user input with streaming and yield updates as they come.
+
+        Args:
+            user_text: The user's input text
+
+        Yields:
+            Tuples of (current_text, audio_output, chat_history) as the response is generated
+
+        """
+        # Generate assistant response as stream and yield updates
+        yield from self.generate_response_stream(user_text)
 
     def load_prompt(self, template_name: str, context: dict | None = None) -> None:
         """Switch prompt template and reset conversation state."""
@@ -236,6 +479,32 @@ def create_voice_chat_interface() -> gr.Blocks:
             room,
         )
 
+    # Streaming version of process_text_input for real-time UI updates
+    def process_text_input_stream(
+        text_input: str, room_name: str
+    ) -> typing.Generator[tuple[str, str | None, list[dict]], None, None]:
+        """Process text input with streaming and yield updates as they come.
+
+        Args:
+            text_input: The user's input text
+            room_name: The chat room to process the input in
+
+        Yields:
+            Tuples of (current_text, audio_output, chat_history) as the response is generated
+
+        """
+        logger.info(
+            f"Processing streaming text input in room {room_name}: {text_input}"
+        )
+        vc = voice_chats.get(room_name)
+        if not vc:
+            logger.error(f"Voice chat instance not found for room: {room_name}")
+            yield text_input, None, []
+            return
+
+        # Use the streaming process function
+        yield from vc.process_input_stream(text_input)
+
     # Callback to play sound effect for the current room
     def play_sound_effect_room(effect_name: str, room_name: str) -> str:
         vc = voice_chats.get(room_name)
@@ -284,7 +553,12 @@ def create_voice_chat_interface() -> gr.Blocks:
             f'data-ts="{ts}" autoplay style="display:none"></audio>'
         )
 
-    with gr.Blocks(title="Voice Chat with OpenAI") as interface:
+    # Create Gradio interface
+    with gr.Blocks(
+        title="Voice Chat with OpenAI",
+        theme=gr.themes.Default(),
+        analytics_enabled=False,
+    ) as interface:
         # State for current room name
         state_room = gr.State(default_room)
         # Chat room selection and creation
@@ -352,13 +626,14 @@ def create_voice_chat_interface() -> gr.Blocks:
             )
 
         # Process voice input per room
+        # Keep using the non-streaming version for voice input as it's more reliable for audio transcription
         audio_input.change(
             fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
-        # Process text input per room
+        # Process text input per room without streaming
         text_input.submit(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
             inputs=[text_input, state_room],
