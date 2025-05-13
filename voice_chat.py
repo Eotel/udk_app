@@ -6,6 +6,7 @@ import base64
 import tempfile
 import time
 import typing
+import uuid
 from pathlib import Path
 
 import gradio as gr
@@ -363,10 +364,21 @@ class VoiceChat:
             streaming=settings.tts_streaming,
         )
 
-        temp_dir = Path(tempfile.gettempdir())
-        audio_path = temp_dir / f"{time.strftime('%Y-%m-%d-%H-%M-%S')}.wav"
+        today = time.strftime("%Y/%m/%d")
+        uuid_str = str(uuid.uuid4())
+        output_dir = Path("output") / today / uuid_str
+        output_dir.mkdir(parents=True, exist_ok=True)
 
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+        audio_path = output_dir / f"{timestamp}.wav"
+        text_path = output_dir / f"{timestamp}.txt"
+
+        with text_path.open("w", encoding="utf-8") as f:
+            f.write(text)
+
+        logger.info(f"Text saved to {text_path}")
         logger.info("Using streaming TTS mode")
+
         with self.client.audio.speech.with_streaming_response.create(
             model=request.model,
             voice=request.voice,
@@ -423,16 +435,16 @@ class VoiceChat:
         # Return formatted chat history for UI with audio
         return user_text, audio_output, self._get_chat_history()
 
-    def get_last_response_tts(self) -> tuple[str | None, str | None, list[dict] | None]:
+    def get_last_response_tts(self) -> tuple[str | None, str | None, list[dict]]:
         """Get TTS for the last assistant response without making a new API call."""
         # Get the last assistant message from conversation history
         for msg in reversed(self.state.conversation_history):
             if msg.role == "assistant":
                 # Synthesize speech for the last response
                 audio_output = self.synthesize_speech(msg.content)
-                return None, audio_output, None
+                return None, audio_output, self._get_chat_history()
 
-        return None, None, None
+        return None, None, self._get_chat_history()
 
     def process_input_stream(
         self, user_text: str
