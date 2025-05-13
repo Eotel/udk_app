@@ -6,6 +6,7 @@ import base64
 import tempfile
 import time
 import typing
+import uuid
 from pathlib import Path
 
 import gradio as gr
@@ -344,7 +345,7 @@ class VoiceChat:
             # If all fallbacks fail, yield empty response
             yield "", None, self._get_chat_history()
 
-    def synthesize_speech(self, text: str) -> str:
+    def synthesize_speech(self, text: str) -> str | None:
         """Synthesize speech from text using OpenAI API."""
         # Skip synthesis if no text provided
         if not text or not text.strip():
@@ -363,10 +364,21 @@ class VoiceChat:
             streaming=settings.tts_streaming,
         )
 
-        temp_dir = Path(tempfile.gettempdir())
-        audio_path = temp_dir / f"{time.strftime('%Y-%m-%d-%H-%M-%S')}.wav"
+        today = time.strftime("%Y/%m/%d")
+        uuid_str = str(uuid.uuid4())
+        output_dir = Path("output") / today / uuid_str
+        output_dir.mkdir(parents=True, exist_ok=True)
 
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+        audio_path = output_dir / f"{timestamp}.wav"
+        text_path = output_dir / f"{timestamp}.txt"
+
+        with text_path.open("w", encoding="utf-8") as f:
+            f.write(text)
+
+        logger.info(f"Text saved to {text_path}")
         logger.info("Using streaming TTS mode")
+
         with self.client.audio.speech.with_streaming_response.create(
             model=request.model,
             voice=request.voice,
@@ -379,7 +391,9 @@ class VoiceChat:
         logger.info(f"Speech synthesized to {audio_path}")
         return str(audio_path)
 
-    def process_voice_input(self, audio_input: str | tuple) -> tuple[str, str, list]:
+    def process_voice_input(
+        self, audio_input: str | tuple
+    ) -> tuple[str, str | None, list]:
         """Process voice input and return the response."""
         audio_path = audio_input[0] if isinstance(audio_input, tuple) else audio_input
 
@@ -387,7 +401,7 @@ class VoiceChat:
 
         return self.process_input(user_text)
 
-    def process_text_input(self, text_input: str) -> tuple[str, str, list]:
+    def process_text_input(self, text_input: str) -> tuple[str, str | None, list]:
         """Process text input and return the response."""
         logger.info(f"Processing text input: {text_input}")
 
@@ -401,15 +415,36 @@ class VoiceChat:
             if msg.role in ("user", "assistant")
         ]
 
-    def process_input(self, user_text: str) -> tuple[str, str, list[dict]]:
+    def process_input(self, user_text: str) -> tuple[str, str | None, list[dict]]:
         """Process user input (voice or text) and return the response and chat history."""
+        # Generate assistant response and add to conversation state
+        self.generate_response(user_text)
+
+        # Return formatted chat history for UI immediately, without waiting for TTS
+        return user_text, None, self._get_chat_history()
+
+    def process_input_with_tts(
+        self, user_text: str
+    ) -> tuple[str, str | None, list[dict]]:
+        """Process user input and return the response with TTS audio."""
         # Generate assistant response and add to conversation state
         response_text = self.generate_response(user_text)
         # Synthesize speech for the response (skip if empty)
         audio_output = self.synthesize_speech(response_text) if response_text else None
 
-        # Return formatted chat history for UI
+        # Return formatted chat history for UI with audio
         return user_text, audio_output, self._get_chat_history()
+
+    def get_last_response_tts(self) -> tuple[str | None, str | None, list[dict]]:
+        """Get TTS for the last assistant response without making a new API call."""
+        # Get the last assistant message from conversation history
+        for msg in reversed(self.state.conversation_history):
+            if msg.role == "assistant":
+                # Synthesize speech for the last response
+                audio_output = self.synthesize_speech(msg.content)
+                return None, audio_output, self._get_chat_history()
+
+        return None, None, self._get_chat_history()
 
     def process_input_stream(
         self, user_text: str
@@ -631,17 +666,30 @@ def create_voice_chat_interface() -> gr.Blocks:
             fn=lambda audio, room: voice_chats[room].process_voice_input(audio),
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda _audio, room: voice_chats[room].get_last_response_tts(),
+            inputs=[audio_input, state_room],
+            outputs=[text_output, audio_output, chat_history],
         )
 
         # Process text input per room without streaming
+        # First update UI immediately with text response
         text_input.submit(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
+            outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda _text, room: voice_chats[room].get_last_response_tts(),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
 
         submit_button.click(
             fn=lambda text, room: voice_chats[room].process_text_input(text),
+            inputs=[text_input, state_room],
+            outputs=[text_output, audio_output, chat_history],
+        ).then(
+            fn=lambda _text, room: voice_chats[room].get_last_response_tts(),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
