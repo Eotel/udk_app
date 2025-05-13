@@ -423,6 +423,17 @@ class VoiceChat:
         # Return formatted chat history for UI with audio
         return user_text, audio_output, self._get_chat_history()
 
+    def get_last_response_tts(self) -> tuple[str | None, str | None, list[dict] | None]:
+        """Get TTS for the last assistant response without making a new API call."""
+        # Get the last assistant message from conversation history
+        for msg in reversed(self.state.conversation_history):
+            if msg.role == "assistant":
+                # Synthesize speech for the last response
+                audio_output = self.synthesize_speech(msg.content)
+                return None, audio_output, None
+
+        return None, None, None
+
     def process_input_stream(
         self, user_text: str
     ) -> typing.Generator[tuple[str, str | None, list[dict]], None, None]:
@@ -644,11 +655,7 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda audio, room: (None, voice_chats[room].process_input_with_tts(
-                voice_chats[room].transcribe_audio(
-                    audio[0] if isinstance(audio, tuple) else audio
-                )
-            )[1], None),
+            fn=lambda _audio, room: voice_chats[room].get_last_response_tts(),
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
@@ -660,7 +667,7 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda text, room: (None, voice_chats[room].process_input_with_tts(text)[1], None),
+            fn=lambda _text, room: voice_chats[room].get_last_response_tts(),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )
@@ -670,7 +677,7 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda text, room: (None, voice_chats[room].process_input_with_tts(text)[1], None),
+            fn=lambda _text, room: voice_chats[room].get_last_response_tts(),
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         )

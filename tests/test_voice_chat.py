@@ -335,7 +335,7 @@ class TestVoiceChat:
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi there"},
             ]
-            
+
     def test_process_input_with_tts(self, voice_chat: VoiceChat) -> None:
         """Test input processing with TTS."""
         voice_chat.state.conversation_history = [
