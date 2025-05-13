@@ -644,13 +644,13 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[audio_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda audio, room: voice_chats[room].process_input_with_tts(
+            fn=lambda audio, room: (None, voice_chats[room].process_input_with_tts(
                 voice_chats[room].transcribe_audio(
                     audio[0] if isinstance(audio, tuple) else audio
                 )
-            ),
+            )[1], None),
             inputs=[audio_input, state_room],
-            outputs=[None, audio_output, None],
+            outputs=[text_output, audio_output, chat_history],
         )
 
         # Process text input per room without streaming
@@ -660,9 +660,9 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda text, room: voice_chats[room].process_input_with_tts(text),
+            fn=lambda text, room: (None, voice_chats[room].process_input_with_tts(text)[1], None),
             inputs=[text_input, state_room],
-            outputs=[None, audio_output, None],
+            outputs=[text_output, audio_output, chat_history],
         )
 
         submit_button.click(
@@ -670,9 +670,9 @@ def create_voice_chat_interface() -> gr.Blocks:
             inputs=[text_input, state_room],
             outputs=[text_output, audio_output, chat_history],
         ).then(
-            fn=lambda text, room: voice_chats[room].process_input_with_tts(text),
+            fn=lambda text, room: (None, voice_chats[room].process_input_with_tts(text)[1], None),
             inputs=[text_input, state_room],
-            outputs=[None, audio_output, None],
+            outputs=[text_output, audio_output, chat_history],
         )
 
         # Sound effect buttons per room
