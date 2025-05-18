@@ -11,7 +11,7 @@ from settings import settings
 class SoundEffects:
     """Sound effects manager for the UDK app."""
 
-    def __init__(self, sounds_dir: Path | None = None) -> None:
+    def __init__(self, sounds_dir: str | Path | None = None) -> None:
         """Initialize the sound effects manager.
 
         Args:
