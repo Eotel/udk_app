@@ -18,6 +18,8 @@ def mock_sound_dir(tmp_path: Path) -> Path:
     (sound_dir / "click.mp3").touch()
     (sound_dir / "notification.mp3").touch()
     (sound_dir / "success.mp3").touch()
+    (sound_dir / "waiting.mp3").touch()
+    (sound_dir / "bgm.mp3").touch()
 
     return sound_dir
 
@@ -29,10 +31,12 @@ class TestSoundEffects:
         """Test initialization with an existing sounds directory."""
         sound_effects = SoundEffects(sounds_dir=str(mock_sound_dir))
 
-        assert len(sound_effects.sound_effects) == 3
+        assert len(sound_effects.sound_effects) == 5
         assert "click" in sound_effects.sound_effects
         assert "notification" in sound_effects.sound_effects
         assert "success" in sound_effects.sound_effects
+        assert "waiting" in sound_effects.sound_effects
+        assert "bgm" in sound_effects.sound_effects
 
     def test_init_with_nonexistent_dir(self) -> None:
         """Test initialization with a non-existent sounds directory."""
@@ -63,7 +67,7 @@ class TestSoundEffects:
 
         result = sound_effects.get_available_sound_effects()
 
-        assert sorted(result) == ["click", "notification", "success"]
+        assert sorted(result) == ["bgm", "click", "notification", "success", "waiting"]
 
     def test_play_sound_effect(self, mock_sound_dir: Path) -> None:
         """Test playing a sound effect."""
@@ -76,3 +80,36 @@ class TestSoundEffects:
 
             mock_get.assert_called_once_with("click")
             assert result == str(mock_sound_dir / "click.mp3")
+
+    def test_play_bgm(self, mock_sound_dir: Path) -> None:
+        """Test playing background music."""
+        sound_effects = SoundEffects(sounds_dir=str(mock_sound_dir))
+
+        with patch.object(sound_effects, "get_sound_effect") as mock_get:
+            mock_get.return_value = str(mock_sound_dir / "bgm.mp3")
+
+            result = sound_effects.play_bgm("bgm")
+
+            mock_get.assert_called_once_with("bgm")
+            assert result == str(mock_sound_dir / "bgm.mp3")
+            assert sound_effects.current_bgm == "bgm"
+
+    def test_stop_bgm_with_active_bgm(self, mock_sound_dir: Path) -> None:
+        """Test stopping background music when it is playing."""
+        sound_effects = SoundEffects(sounds_dir=str(mock_sound_dir))
+        sound_effects.current_bgm = "bgm"
+
+        result = sound_effects.stop_bgm()
+
+        assert result == ""
+        assert sound_effects.current_bgm is None
+
+    def test_stop_bgm_with_no_bgm(self, mock_sound_dir: Path) -> None:
+        """Test stopping background music when none is playing."""
+        sound_effects = SoundEffects(sounds_dir=str(mock_sound_dir))
+        sound_effects.current_bgm = None
+
+        result = sound_effects.stop_bgm()
+
+        assert result == ""
+        assert sound_effects.current_bgm is None
