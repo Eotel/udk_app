@@ -458,6 +458,8 @@ class VoiceChat:
             Tuples of (current_text, audio_output, chat_history) as the response is generated
 
         """
+        self.sound_effects.play_sound_effect("waiting")
+
         # Generate assistant response as stream and yield updates
         yield from self.generate_response_stream(user_text)
 
@@ -650,6 +652,55 @@ def create_voice_chat_interface() -> gr.Blocks:
                     for effect_name in available_effects:
                         button = gr.Button(f"{effect_name.capitalize()}")
                         sound_buttons.append((button, effect_name))
+
+                gr.Markdown("## Background Music")
+                bgm_output = gr.HTML(label="Background Music")
+                with gr.Row():
+                    bgm_play_button = gr.Button("Play BGM")
+                    bgm_stop_button = gr.Button("Stop BGM")
+
+                def play_bgm(room_name: str) -> str:
+                    """Play background music for the current room."""
+                    logger.info(f"Playing BGM in room {room_name}")
+                    vc = voice_chats.get(room_name)
+                    if not vc:
+                        return ""
+                    sound_path = vc.sound_effects.play_bgm(
+                        "success"
+                    )  # Using success.mp3 as BGM for now
+                    if not sound_path:
+                        return ""
+                    try:
+                        data = Path(sound_path).read_bytes()
+                    except OSError as e:
+                        logger.warning(f"Failed to read BGM file: {e}")
+                        return ""
+                    b64 = base64.b64encode(data).decode("utf-8")
+                    ts = int(time.time() * 1000)
+                    return (
+                        f'<audio src="data:audio/mpeg;base64,{b64}" '
+                        f'data-ts="{ts}" autoplay loop style="display:none"></audio>'
+                    )
+
+                def stop_bgm(room_name: str) -> str:
+                    """Stop background music for the current room."""
+                    logger.info(f"Stopping BGM in room {room_name}")
+                    vc = voice_chats.get(room_name)
+                    if not vc:
+                        return ""
+                    return vc.sound_effects.stop_bgm()
+
+                # Wire up BGM controls
+                bgm_play_button.click(
+                    fn=play_bgm,
+                    inputs=[state_room],
+                    outputs=bgm_output,
+                )
+                bgm_stop_button.click(
+                    fn=stop_bgm,
+                    inputs=[state_room],
+                    outputs=bgm_output,
+                )
 
         chat_history = gr.Chatbot(label="Chat History", type="messages")
         # Connect prompt selector to clear and load new prompt

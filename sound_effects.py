@@ -24,6 +24,7 @@ class SoundEffects:
         else:
             self.sounds_dir = settings.sounds_dir
         self.sound_effects: dict[str, str] = self._load_sound_effects()
+        self.current_bgm: str | None = None
 
     def _load_sound_effects(self) -> dict[str, str]:
         """Load sound effects from the sounds directory.
@@ -86,3 +87,33 @@ class SoundEffects:
 
         logger.info(f"Playing sound effect: {name}")
         return sound_path
+
+    def play_bgm(self, name: str) -> str:
+        """Play background music by name.
+
+        Args:
+            name: Name of the BGM sound file
+
+        Returns:
+            Path to the BGM sound file for Gradio to play
+
+        """
+        sound_path = self.get_sound_effect(name)
+        if not sound_path:
+            return ""
+
+        self.current_bgm = name
+        logger.info(f"Starting BGM: {name}")
+        return sound_path
+
+    def stop_bgm(self) -> str:
+        """Stop currently playing background music.
+
+        Returns:
+            Empty string to clear the audio element
+
+        """
+        if self.current_bgm:
+            logger.info(f"Stopping BGM: {self.current_bgm}")
+            self.current_bgm = None
+        return ""
